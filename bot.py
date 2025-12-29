@@ -22,7 +22,7 @@ else:
     sent = {"posts": [], "highlights": []}
 
 # === CHANGE THIS TO YOUR TARGET IG ===
-IG_USERNAME = "ying__ww"   # <----- แก้ตรงนี้ เช่น "ying_ww"
+IG_USERNAME = "ying__ww"   # <---- แก้ตรงนี้
 
 profile = instaloader.Profile.from_username(L.context, IG_USERNAME)
 
@@ -41,22 +41,18 @@ for post in profile.get_posts():
     file_paths = sorted(os.listdir(post.shortcode))
     media_group = []
 
-    # ALBUM
-    if len(file_paths) > 1:
+    if len(file_paths) > 1:  # ALBUM
         for f in file_paths:
             path = f"{post.shortcode}/{f}"
             if f.endswith(".jpg"):
                 media_group.append(InputMediaPhoto(media=open(path, "rb")))
             elif f.endswith(".mp4"):
                 media_group.append(InputMediaVideo(media=open(path, "rb")))
-
         bot.send_media_group(CHAT_ID, media_group)
 
-    # SINGLE FILE
-    else:
+    else:  # SINGLE
         f = file_paths[0]
         path = f"{post.shortcode}/{f}"
-
         if f.endswith(".jpg"):
             bot.send_photo(CHAT_ID, open(path, "rb"))
         elif f.endswith(".mp4"):
@@ -64,14 +60,14 @@ for post in profile.get_posts():
 
     shutil.rmtree(post.shortcode)
     sent["posts"].append(post.shortcode)
-    time.sleep(2)  # prevent rate-limit
+    time.sleep(2)
 
 
 # ==========================
 # ⭐ SEND HIGHLIGHTS (ONE BY ONE)
 # ==========================
-for highlight in profile.get_highlights():
-
+# IMPORTANT: use L.get_highlights(profile.userid)
+for highlight in L.get_highlights(profile.userid):
     for item in highlight.get_items():
 
         uid = str(item.mediaid)
@@ -86,7 +82,6 @@ for highlight in profile.get_highlights():
 
         for f in sorted(os.listdir(dl_folder)):
             path = f"{dl_folder}/{f}"
-
             if f.endswith(".jpg"):
                 bot.send_photo(CHAT_ID, open(path, "rb"))
             elif f.endswith(".mp4"):
@@ -99,4 +94,4 @@ for highlight in profile.get_highlights():
 
 # === SAVE PROGRESS ===
 json.dump(sent, open("sent.json", "w"))
-print("✅ DONE — next run will continue from here")
+print("✅ DONE — Highlights & Posts sent successfully")
