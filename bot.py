@@ -22,7 +22,7 @@ else:
     sent = {"posts": [], "highlights": []}
 
 # === ✏️ แก้เป็นชื่อไอจีที่คุณต้องการ ===
-IG_USERNAME = "ชื่อไอจีของคุณ"   # <---- แก้ตรงนี้อย่างเดียวก่อนรัน
+IG_USERNAME = "ying__ww"   # <---- แก้ตรงนี้อย่างเดียวก่อนรัน
 
 profile = instaloader.Profile.from_username(L.context, IG_USERNAME)
 
