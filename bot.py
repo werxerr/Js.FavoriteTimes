@@ -1,7 +1,8 @@
 import instaloader
 from telegram import Bot, Update, InputMediaPhoto, InputMediaVideo
-from telegram.ext import Updater, CommandHandler
-import os, json, shutil, time
+from telegram.ext import Updater, MessageHandler, Filters
+import os, json, shutil, time, re
+
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(BOT_TOKEN)
@@ -21,22 +22,22 @@ sent = json.load(open("sent.json")) if os.path.exists("sent.json") else {"posts"
 
 
 
-# ---------- COMMANDS ----------
+# ---------- COMMAND FUNCTIONS ----------
 def add_ig(update: Update, context):
     msg = update.message
 
-    # รับเฉพาะใน topic คำสั่ง
     if msg.message_thread_id != targets["command_thread"]:
         return
 
-    if len(context.args) != 1:
+    parts = msg.text.split()
+    if len(parts) < 2:
         msg.reply_text("ใช้แบบนี้:\n/เพิ่ม <ไอจี>\n/addig <instagram>")
         return
 
-    ig = context.args[0].lower()
+    ig = parts[1].lower()
     chat_id = targets["summary_chat"]
 
-    # สร้าง topic ใหม่ตามชื่อ IG
+    # สร้าง topic ใหม่ ชื่อเหมือน IG
     resp = bot.create_forum_topic(chat_id=chat_id, name=ig)
     thread_id = resp.message_thread_id
 
@@ -44,11 +45,9 @@ def add_ig(update: Update, context):
         "chat_id": chat_id,
         "thread_id": thread_id
     }
-
     json.dump(targets, open("targets.json","w"))
 
     msg.reply_text(f"เพิ่ม {ig} สำเร็จ ✔\nหัวข้อใหม่: {ig}")
-
 
 
 def del_ig(update: Update, context):
@@ -57,11 +56,12 @@ def del_ig(update: Update, context):
     if msg.message_thread_id != targets["command_thread"]:
         return
 
-    if len(context.args) != 1:
+    parts = msg.text.split()
+    if len(parts) < 2:
         msg.reply_text("ใช้แบบนี้:\n/ลบ <ไอจี>\n/delig <instagram>")
         return
 
-    ig = context.args[0].lower()
+    ig = parts[1].lower()
 
     if ig not in targets["targets"]:
         msg.reply_text(f"{ig} ไม่มีในระบบ ❌")
@@ -73,10 +73,8 @@ def del_ig(update: Update, context):
     msg.reply_text(f"ลบ {ig} แล้ว ✔")
 
 
-
 def show_id(update: Update, context):
     update.message.reply_text(f"chat_id = {update.message.chat_id}")
-
 
 
 def help_cmd(update: Update, context):
@@ -85,18 +83,18 @@ def help_cmd(update: Update, context):
         "/เพิ่ม <ig>\n/addig <ig>\n ➜ เพิ่มบัญชี IG และสร้างหัวข้อใหม่\n\n"
         "/ลบ <ig>\n/delig <ig>\n ➜ ลบบัญชี IG ออกจากระบบ\n\n"
         "/สถานะ\n/status\n ➜ ดูสรุปการทำงานล่าสุด\n"
+        "/ไอดี\n/id\n ➜ ดู chat_id\n"
     )
     update.message.reply_text(text)
 
 
 
-# ---------- SEND DASHBOARD ----------
+# ---------- DASHBOARD ----------
 def dashboard():
     chat_id = targets["summary_chat"]
     thread_id = targets["summary_thread"]
 
     lines = ["📊 สรุปผลการทำงานล่าสุด\n"]
-
     for ig, data in targets["targets"].items():
         total_sent = len(sent["posts"].get(ig, []))
         lines.append(f"{ig:<15} ส่งแล้ว {total_sent} โพสต์")
@@ -145,20 +143,45 @@ def send_ig_posts(ig):
         shutil.rmtree(post.shortcode)
         sent["posts"][ig].append(post.shortcode)
         new_count += 1
-        time.sleep(2)  # กัน rate limit
+        time.sleep(2) # กัน rate limit
 
     json.dump(sent, open("sent.json","w"))
-
     return new_count
 
 
 
-# ---------- AUTO RUN ----------
+# ---------- AUTO WORKER ----------
 def worker():
-    for ig, data in targets["targets"].items():
+    for ig in targets["targets"]:
         send_ig_posts(ig)
-
     dashboard()
+
+
+
+# ---------- COMMAND ROUTING ----------
+def command_router(update, context):
+    msg = update.message.text.strip()
+
+    # เพิ่มบัญชี IG
+    if re.match(r"^/(addig|เพิ่ม)\b", msg, re.IGNORECASE):
+        return add_ig(update, context)
+
+    # ลบบัญชี IG
+    if re.match(r"^/(delig|ลบ)\b", msg, re.IGNORECASE):
+        return del_ig(update, context)
+
+    # สถานะ
+    if re.match(r"^/(status|สถานะ)\b", msg, re.IGNORECASE):
+        dashboard()
+        return
+
+    # ไอดี
+    if re.match(r"^/(id|ไอดี)\b", msg, re.IGNORECASE):
+        return show_id(update, context)
+
+    # ช่วยเหลือ
+    if re.match(r"^/(help|ช่วยเหลือ)\b", msg, re.IGNORECASE):
+        return help_cmd(update, context)
 
 
 
@@ -167,18 +190,16 @@ def main():
     updater = Updater(BOT_TOKEN)
     dp = updater.dispatcher
 
-    dp.add_handler(CommandHandler(["addig", "เพิ่ม"], add_ig))
-    dp.add_handler(CommandHandler(["delig", "ลบ"], del_ig))
-    dp.add_handler(CommandHandler(["status", "สถานะ"], lambda u, c: dashboard()))
-    dp.add_handler(CommandHandler(["id", "ไอดี"], show_id))
-    dp.add_handler(CommandHandler(["help", "ช่วยเหลือ"], help_cmd))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, command_router))
+    dp.add_handler(MessageHandler(Filters.command, command_router))
 
     updater.start_polling()
     updater.idle()
 
 
+
 if __name__ == "__main__":
     if targets["summary_chat"] is None:
         print("⚠ กรุณาตั้งค่า summary_chat ใน targets.json ก่อน")
-    worker()  # GitHub Actions เรียกตอนรัน
+    worker()
     main()
