@@ -1,97 +1,184 @@
 import instaloader
-from telegram import Bot, InputMediaPhoto, InputMediaVideo
+from telegram import Bot, Update, InputMediaPhoto, InputMediaVideo
+from telegram.ext import Updater, CommandHandler
 import os, json, shutil, time
 
-# === READ FROM GITHUB SECRETS ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_JSFAVORITEGIRLS")
-
 bot = Bot(BOT_TOKEN)
 
-# === INSTALOADER SETTINGS ===
-L = instaloader.Instaloader(
-    download_videos=True,
-    save_metadata=False,
-    compress_json=False,
-)
-
-# === LOAD SENT HISTORY (ANTI-DUPLICATE) ===
-if os.path.exists("sent.json"):
-    sent = json.load(open("sent.json"))
-else:
-    sent = {"posts": [], "highlights": []}
-
-# === CHANGE THIS TO YOUR TARGET IG ===
-IG_USERNAME = "ying__ww"   # <---- แก้ตรงนี้
-
-profile = instaloader.Profile.from_username(L.context, IG_USERNAME)
-
-# ==========================
-# 🔥 SEND POSTS / REELS / ALBUMS
-# ==========================
-for post in profile.get_posts():
-
-    if post.shortcode in sent["posts"]:
-        continue
-
-    print(f"📌 Sending post: {post.shortcode}")
-
-    L.download_post(post, target=post.shortcode)
-
-    file_paths = sorted(os.listdir(post.shortcode))
-    media_group = []
-
-    if len(file_paths) > 1:  # ALBUM
-        for f in file_paths:
-            path = f"{post.shortcode}/{f}"
-            if f.endswith(".jpg"):
-                media_group.append(InputMediaPhoto(media=open(path, "rb")))
-            elif f.endswith(".mp4"):
-                media_group.append(InputMediaVideo(media=open(path, "rb")))
-        bot.send_media_group(CHAT_ID, media_group)
-
-    else:  # SINGLE
-        f = file_paths[0]
-        path = f"{post.shortcode}/{f}"
-        if f.endswith(".jpg"):
-            bot.send_photo(CHAT_ID, open(path, "rb"))
-        elif f.endswith(".mp4"):
-            bot.send_video(CHAT_ID, open(path, "rb"))
-
-    shutil.rmtree(post.shortcode)
-    sent["posts"].append(post.shortcode)
-    time.sleep(2)
+L = instaloader.Instaloader(download_videos=True, save_metadata=False, compress_json=False)
 
 
-# ==========================
-# ⭐ SEND HIGHLIGHTS (ONE BY ONE)
-# ==========================
-# IMPORTANT: use L.get_highlights(profile.userid)
-for highlight in L.get_highlights(profile.userid):
-    for item in highlight.get_items():
+# ---------- LOAD DATA ----------
+targets = json.load(open("targets.json")) if os.path.exists("targets.json") else {
+    "targets": {},
+    "summary_chat": None,
+    "command_thread": 1,
+    "summary_thread": 2
+}
 
-        uid = str(item.mediaid)
+sent = json.load(open("sent.json")) if os.path.exists("sent.json") else {"posts": {}}
 
-        if uid in sent["highlights"]:
+
+
+# ---------- COMMANDS ----------
+def add_ig(update: Update, context):
+    msg = update.message
+
+    # รับเฉพาะใน topic คำสั่ง
+    if msg.message_thread_id != targets["command_thread"]:
+        return
+
+    if len(context.args) != 1:
+        msg.reply_text("ใช้แบบนี้:\n/เพิ่ม <ไอจี>\n/addig <instagram>")
+        return
+
+    ig = context.args[0].lower()
+    chat_id = targets["summary_chat"]
+
+    # สร้าง topic ใหม่ตามชื่อ IG
+    resp = bot.create_forum_topic(chat_id=chat_id, name=ig)
+    thread_id = resp.message_thread_id
+
+    targets["targets"][ig] = {
+        "chat_id": chat_id,
+        "thread_id": thread_id
+    }
+
+    json.dump(targets, open("targets.json","w"))
+
+    msg.reply_text(f"เพิ่ม {ig} สำเร็จ ✔\nหัวข้อใหม่: {ig}")
+
+
+
+def del_ig(update: Update, context):
+    msg = update.message
+
+    if msg.message_thread_id != targets["command_thread"]:
+        return
+
+    if len(context.args) != 1:
+        msg.reply_text("ใช้แบบนี้:\n/ลบ <ไอจี>\n/delig <instagram>")
+        return
+
+    ig = context.args[0].lower()
+
+    if ig not in targets["targets"]:
+        msg.reply_text(f"{ig} ไม่มีในระบบ ❌")
+        return
+
+    del targets["targets"][ig]
+    json.dump(targets, open("targets.json","w"))
+
+    msg.reply_text(f"ลบ {ig} แล้ว ✔")
+
+
+
+def show_id(update: Update, context):
+    update.message.reply_text(f"chat_id = {update.message.chat_id}")
+
+
+
+def help_cmd(update: Update, context):
+    text = (
+        "📌 คำสั่งบอท (ไทย/อังกฤษ)\n\n"
+        "/เพิ่ม <ig>\n/addig <ig>\n ➜ เพิ่มบัญชี IG และสร้างหัวข้อใหม่\n\n"
+        "/ลบ <ig>\n/delig <ig>\n ➜ ลบบัญชี IG ออกจากระบบ\n\n"
+        "/สถานะ\n/status\n ➜ ดูสรุปการทำงานล่าสุด\n"
+    )
+    update.message.reply_text(text)
+
+
+
+# ---------- SEND DASHBOARD ----------
+def dashboard():
+    chat_id = targets["summary_chat"]
+    thread_id = targets["summary_thread"]
+
+    lines = ["📊 สรุปผลการทำงานล่าสุด\n"]
+
+    for ig, data in targets["targets"].items():
+        total_sent = len(sent["posts"].get(ig, []))
+        lines.append(f"{ig:<15} ส่งแล้ว {total_sent} โพสต์")
+
+    bot.send_message(chat_id, "\n".join(lines), message_thread_id=thread_id)
+
+
+
+# ---------- SEND POSTS ----------
+def send_ig_posts(ig):
+    chat_id = targets["targets"][ig]["chat_id"]
+    thread_id = targets["targets"][ig]["thread_id"]
+
+    if ig not in sent["posts"]:
+        sent["posts"][ig] = []
+
+    profile = instaloader.Profile.from_username(L.context, ig)
+    new_count = 0
+
+    for post in profile.get_posts():
+        if post.shortcode in sent["posts"][ig]:
             continue
 
-        print(f"🌟 Sending highlight: {uid}")
+        L.download_post(post, target=post.shortcode)
+        files = sorted(os.listdir(post.shortcode))
+        media_group = []
 
-        dl_folder = f"hl_{uid}"
-        L.download_storyitem(item, target=dl_folder)
+        if len(files) > 1:
+            # อัลบั้ม
+            for f in files:
+                path = f"{post.shortcode}/{f}"
+                if f.endswith(".jpg"):
+                    media_group.append(InputMediaPhoto(open(path, "rb")))
+                elif f.endswith(".mp4"):
+                    media_group.append(InputMediaVideo(open(path, "rb")))
+            bot.send_media_group(chat_id, media_group, message_thread_id=thread_id)
 
-        for f in sorted(os.listdir(dl_folder)):
-            path = f"{dl_folder}/{f}"
+        else:
+            f = files[0]
+            path = f"{post.shortcode}/{f}"
             if f.endswith(".jpg"):
-                bot.send_photo(CHAT_ID, open(path, "rb"))
+                bot.send_photo(chat_id, open(path, "rb"), message_thread_id=thread_id)
             elif f.endswith(".mp4"):
-                bot.send_video(CHAT_ID, open(path, "rb"))
+                bot.send_video(chat_id, open(path, "rb"), message_thread_id=thread_id)
 
-        shutil.rmtree(dl_folder)
-        sent["highlights"].append(uid)
-        time.sleep(2)
+        shutil.rmtree(post.shortcode)
+        sent["posts"][ig].append(post.shortcode)
+        new_count += 1
+        time.sleep(2)  # กัน rate limit
+
+    json.dump(sent, open("sent.json","w"))
+
+    return new_count
 
 
-# === SAVE PROGRESS ===
-json.dump(sent, open("sent.json", "w"))
-print("✅ DONE — Highlights & Posts sent successfully")
+
+# ---------- AUTO RUN ----------
+def worker():
+    for ig, data in targets["targets"].items():
+        send_ig_posts(ig)
+
+    dashboard()
+
+
+
+# ---------- MAIN ----------
+def main():
+    updater = Updater(BOT_TOKEN)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler(["addig", "เพิ่ม"], add_ig))
+    dp.add_handler(CommandHandler(["delig", "ลบ"], del_ig))
+    dp.add_handler(CommandHandler(["status", "สถานะ"], lambda u, c: dashboard()))
+    dp.add_handler(CommandHandler(["id", "ไอดี"], show_id))
+    dp.add_handler(CommandHandler(["help", "ช่วยเหลือ"], help_cmd))
+
+    updater.start_polling()
+    updater.idle()
+
+
+if __name__ == "__main__":
+    if targets["summary_chat"] is None:
+        print("⚠ กรุณาตั้งค่า summary_chat ใน targets.json ก่อน")
+    worker()  # GitHub Actions เรียกตอนรัน
+    main()
